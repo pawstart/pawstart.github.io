@@ -144,6 +144,12 @@ img{max-width:100%;height:auto;border-radius:10px}
 .search-panel{background:#fff;border-radius:16px;max-width:640px;margin:0 auto;padding:22px;max-height:76vh;overflow:auto}
 .search-panel input{width:100%;padding:13px 15px;border:2px solid var(--line);border-radius:11px;font-size:1.05rem;margin:0 0 12px}
 #pagefind-results:empty::after{content:"Type to search articles…";color:var(--muted)}
+.sr-item{padding:12px 2px;border-bottom:1px solid var(--line)}
+.sr-item:last-child{border-bottom:0}
+.sr-title{font-weight:700;color:var(--ink);text-decoration:none;font-size:1.02rem}
+.sr-title:hover{color:var(--teal)}
+.sr-excerpt{color:var(--muted);font-size:.92rem;margin-top:4px}
+.sr-cat{font-size:.78rem;color:var(--teal);font-weight:700;margin-top:4px;text-transform:uppercase;letter-spacing:.04em}
 /* responsive */
 @media(max-width:900px){
   .cards,.cat-grid{grid-template-columns:repeat(2,1fr)}
@@ -211,12 +217,12 @@ img{max-width:100%;height:auto;border-radius:10px}
 </div></footer>
 <div class="search-modal" id="search-modal" role="dialog" aria-modal="true" aria-label="Site search">
 <div class="search-panel">
-<script>window.PAGEFIND_BASE="_pagefind/";</script>
+<script>window.SEARCH_INDEX_URL="search-index.json";</script>
 <input type="search" id="pagefind-input" placeholder="Search articles…" aria-label="Search articles">
 <div id="pagefind-results"></div>
-<p class="small muted" style="margin:10px 0 0">Powered by <a href="https://pagefind.app">Pagefind</a> — runs fully offline, no tracking.</p>
+<p class="small muted" style="margin:10px 0 0">Search runs entirely in your browser — no tracking.</p>
 </div></div>
-<script>// PawStart: mobile nav, dropdown, search modal (Pagefind)
+<script>// PawStart: mobile nav, dropdown, search modal (JSON index search)
 (function(){
   var ham=document.getElementById('hamburger'), nav=document.getElementById('mainnav');
   if(ham&&nav){ham.addEventListener('click',function(){nav.classList.toggle('open');});}
@@ -224,7 +230,7 @@ img{max-width:100%;height:auto;border-radius:10px}
   if(dd){dd.addEventListener('click',function(e){e.stopPropagation();dd.parentElement.classList.toggle('open');});
     document.addEventListener('click',function(){document.querySelectorAll('.dropdown.open').forEach(function(x){x.classList.remove('open');});});}
   var modal=document.getElementById('search-modal');
-  function openSearch(q){modal.classList.add('open');var i=document.getElementById('pagefind-input');if(i){i.focus();if(q)i.value=q;}}
+  function openSearch(q){modal.classList.add('open');var i=document.getElementById('pagefind-input');if(i){i.focus();if(q){i.value=q;doSearch(q);}}}
   function closeSearch(){modal.classList.remove('open');}
   document.querySelectorAll('[data-open-search]').forEach(function(b){
     b.addEventListener('click',function(){openSearch(b.getAttribute('data-search-q')||'');});});
@@ -233,20 +239,40 @@ img{max-width:100%;height:auto;border-radius:10px}
     openSearch(document.getElementById('hero-search-input').value);});}
   modal.addEventListener('click',function(e){if(e.target===modal)closeSearch();});
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSearch();});
-  // Lazy-load Pagefind UI only when the index was built (/_pagefind/)
-  var loaded=false;
-  function ensurePagefind(){
-    if(loaded)return;loaded=true;
-    var css=document.createElement('link');css.rel='stylesheet';
-    css.href=window.PAGEFIND_BASE+'pagefind-ui.css';document.head.appendChild(css);
-    var s=document.createElement('script');s.src=window.PAGEFIND_BASE+'pagefind-ui.js';
-    s.onload=function(){new PagefindUI({element:'#pagefind-results',showSubResults:true});};
-    s.onerror=function(){document.getElementById('pagefind-results').innerHTML=
-      '<p class="muted">Search is unavailable in this preview. It activates after the site is built with Pagefind (see README).</p>';};
-    document.body.appendChild(s);
+  // Site search over /search-index.json (no external service, no tracking)
+  var index=null, input=document.getElementById('pagefind-input'),
+      results=document.getElementById('pagefind-results');
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function doSearch(q){
+    q=(q||'').trim().toLowerCase();
+    if(!index||q.length<2){results.innerHTML='';return;}
+    var words=q.split(/\s+/), hits=[];
+    index.forEach(function(doc){
+      var hay=(doc.title+' '+doc.excerpt+' '+doc.category+' '+(doc.keywords||'')).toLowerCase();
+      var score=0;
+      words.forEach(function(w){ if(doc.title.toLowerCase().indexOf(w)>-1)score+=3; else if(hay.indexOf(w)>-1)score+=1; });
+      if(score>0)hits.push({doc:doc,score:score});
+    });
+    hits.sort(function(a,b){return b.score-a.score;});
+    hits=hits.slice(0,8);
+    if(!hits.length){results.innerHTML='<p class="muted">No articles match &ldquo;'+esc(q)+'&rdquo; yet — try &ldquo;puppy&rdquo; or &ldquo;crate&rdquo;.</p>';return;}
+    results.innerHTML=hits.map(function(h){
+      return '<div class="sr-item"><a class="sr-title" href="'+esc(h.doc.url)+'">'+esc(h.doc.title)+'</a>'
+        +'<div class="sr-excerpt">'+esc(h.doc.excerpt)+'</div>'
+        +'<div class="sr-cat">'+esc(h.doc.category)+'</div></div>';
+    }).join('');
   }
-  var obs=new MutationObserver(function(){if(modal.classList.contains('open'))ensurePagefind();});
-  obs.observe(modal,{attributes:true,attributeFilter:['class']});
+  if(input){
+    input.addEventListener('input',function(){doSearch(input.value);});
+    var obs=new MutationObserver(function(){
+      if(modal.classList.contains('open')&&!index){
+        fetch(window.SEARCH_INDEX_URL).then(function(r){return r.json();})
+          .then(function(j){index=j;doSearch(input.value);})
+          .catch(function(){results.innerHTML='<p class="muted">Search is temporarily unavailable.</p>';});
+      }
+    });
+    obs.observe(modal,{attributes:true,attributeFilter:['class']});
+  }
 })();
 </script>
 </body>
